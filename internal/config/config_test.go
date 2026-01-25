@@ -80,3 +80,22 @@ func TestLoadSave(t *testing.T) {
 		t.Errorf("Load() after Save: defaults.machine = %q, want customMachine", cfg2.Defaults.Machine)
 	}
 }
+
+func TestGetRepoConfig(t *testing.T) {
+	cfg := DefaultConfig()
+
+	// Test existing repo
+	repoCfg := cfg.GetRepoConfig("github/github")
+	if repoCfg == nil {
+		t.Fatal("GetRepoConfig(github/github) returned nil")
+	}
+	if repoCfg.Alias != "gh" {
+		t.Errorf("GetRepoConfig(github/github).Alias = %q, want gh", repoCfg.Alias)
+	}
+
+	// Test non-existing repo
+	repoCfg = cfg.GetRepoConfig("unknown/repo")
+	if repoCfg != nil {
+		t.Errorf("GetRepoConfig(unknown/repo) = %v, want nil", repoCfg)
+	}
+}
