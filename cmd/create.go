@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/luanzeba/gh-csd/internal/config"
 	"github.com/luanzeba/gh-csd/internal/gh"
 	"github.com/luanzeba/gh-csd/internal/state"
 	"github.com/spf13/cobra"
@@ -49,15 +50,36 @@ func init() {
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
-	repo := expandRepoAlias(args[0])
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
+		cfg = config.DefaultConfig()
+	}
+
+	// Resolve alias to full repo name
+	repo := cfg.ResolveAlias(args[0])
+	if !strings.Contains(repo, "/") {
+		// Assume it's a GitHub org repo
+		repo = "github/" + repo
+	}
 
 	fmt.Printf("Creating codespace for %s...\n", repo)
+
+	// Get defaults from config, but flags override
+	machine := createMachine
+	devcontainer := createDevcontainer
+	if !cmd.Flags().Changed("machine") && cfg.Defaults.Machine != "" {
+		machine = cfg.Defaults.Machine
+	}
+	if !cmd.Flags().Changed("devcontainer") && cfg.Defaults.Devcontainer != "" {
+		devcontainer = cfg.Defaults.Devcontainer
+	}
 
 	// Build gh cs create command
 	createArgs := []string{"cs", "create",
 		"-R", repo,
-		"-m", createMachine,
-		"--devcontainer-path", createDevcontainer,
+		"-m", machine,
+		"--devcontainer-path", devcontainer,
 		"--status",
 	}
 	if createBranch != "" {
@@ -110,18 +132,14 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	return sshOnce(name)
 }
 
-// expandRepoAlias expands short aliases to full repo names.
-// TODO: Make this configurable via config file
+// expandRepoAlias is deprecated - use config.ResolveAlias instead
 func expandRepoAlias(alias string) string {
-	// Built-in aliases (will be replaced by config)
-	aliases := map[string]string{
-		"gh":    "github/github",
-		"meuse": "github/meuse",
-		"bp":    "github/billing-platform",
-	}
-
-	if full, ok := aliases[alias]; ok {
-		return full
+	cfg, _ := config.Load()
+	if cfg != nil {
+		resolved := cfg.ResolveAlias(alias)
+		if resolved != alias {
+			return resolved
+		}
 	}
 
 	// If it looks like a full repo name, use as-is
