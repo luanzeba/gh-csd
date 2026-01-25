@@ -27,14 +27,12 @@ type codespaceJSON struct {
 	GitStatus   struct {
 		Ref string `json:"ref"`
 	} `json:"gitStatus"`
-	Machine struct {
-		DisplayName string `json:"displayName"`
-	} `json:"machine"`
+	MachineName string `json:"machineName"`
 }
 
 // ListCodespaces returns all codespaces for the authenticated user.
 func ListCodespaces() ([]Codespace, error) {
-	cmd := exec.Command("gh", "cs", "list", "--json", "name,displayName,state,repository,gitStatus,machine")
+	cmd := exec.Command("gh", "cs", "list", "--json", "name,displayName,state,repository,gitStatus,machineName")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -56,7 +54,7 @@ func ListCodespaces() ([]Codespace, error) {
 			State:       cs.State,
 			Repository:  cs.Repository,
 			Branch:      cs.GitStatus.Ref,
-			MachineName: cs.Machine.DisplayName,
+			MachineName: cs.MachineName,
 		}
 	}
 
