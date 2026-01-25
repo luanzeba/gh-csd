@@ -9,8 +9,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/luanzeba/gh-csd/internal/config"
 	"github.com/luanzeba/gh-csd/internal/gh"
 	"github.com/luanzeba/gh-csd/internal/state"
+	"github.com/luanzeba/gh-csd/internal/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -75,8 +77,11 @@ func runSSH(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Connecting to %s (%s @ %s)...\n", cs.Name, cs.Repository, cs.Branch)
 
+	// Set terminal tab title if configured
+	setTabTitleForCodespace(cs)
+
 	if sshRetry {
-		return sshWithRetry(name)
+		return sshWithRetry(name, cs)
 	}
 	return sshOnce(name)
 }
@@ -91,7 +96,7 @@ func sshOnce(name string) error {
 	return cmd.Run()
 }
 
-func sshWithRetry(name string) error {
+func sshWithRetry(name string, cs *gh.Codespace) error {
 	retries := 0
 
 	// Handle Ctrl+C gracefully
@@ -99,6 +104,9 @@ func sshWithRetry(name string) error {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	for {
+		// Refresh tab title on reconnect
+		setTabTitleForCodespace(cs)
+
 		args := buildSSHArgs(name)
 		cmd := exec.Command("gh", args...)
 		cmd.Stdin = os.Stdin
@@ -170,4 +178,22 @@ func getRdmSocketPath() string {
 	}
 
 	return ""
+}
+
+func setTabTitleForCodespace(cs *gh.Codespace) {
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+
+	if !cfg.Terminal.SetTabTitle {
+		return
+	}
+
+	if !terminal.IsSupportedTerminal() {
+		return
+	}
+
+	title := terminal.FormatTitle(cfg.Terminal.TitleFormat, cs.Repository, cs.Branch, cs.Name)
+	terminal.SetTabTitle(title)
 }
