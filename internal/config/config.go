@@ -16,22 +16,35 @@ const (
 
 // Config represents the gh-csd configuration.
 type Config struct {
-	Defaults Defaults          `yaml:"defaults"`
-	Repos    map[string]Repo   `yaml:"repos"`
-	Terminal Terminal          `yaml:"terminal"`
+	Defaults Defaults        `yaml:"defaults"`
+	Repos    map[string]Repo `yaml:"repos"`
+	Hooks    Hooks           `yaml:"hooks"`
+	Terminal Terminal        `yaml:"terminal"`
 }
 
 // Defaults are the default settings for codespace creation.
 type Defaults struct {
-	Machine      string `yaml:"machine"`
-	IdleTimeout  int    `yaml:"idle_timeout"`
-	Devcontainer string `yaml:"devcontainer"`
+	Machine            string `yaml:"machine"`
+	IdleTimeout        int    `yaml:"idle_timeout"`
+	Devcontainer       string `yaml:"devcontainer"`
+	DefaultPermissions bool   `yaml:"default_permissions"`
+	SSHRetry           bool   `yaml:"ssh_retry"`
+	CopyTerminfo       *bool  `yaml:"copy_terminfo"` // pointer to distinguish unset from false
 }
 
 // Repo is per-repository configuration.
 type Repo struct {
-	Alias string   `yaml:"alias"`
-	Ports []int    `yaml:"ports"`
+	Alias              string `yaml:"alias,omitempty"`
+	Machine            string `yaml:"machine,omitempty"`
+	Devcontainer       string `yaml:"devcontainer,omitempty"`
+	DefaultPermissions *bool  `yaml:"default_permissions,omitempty"` // pointer to allow per-repo override
+	SSHRetry           *bool  `yaml:"ssh_retry,omitempty"`           // pointer to allow per-repo override
+	Ports              []int  `yaml:"ports,omitempty"`
+}
+
+// Hooks defines commands to run at various lifecycle points.
+type Hooks struct {
+	PostCreate []string `yaml:"post_create,omitempty"`
 }
 
 // Terminal configures terminal integration.
@@ -42,16 +55,25 @@ type Terminal struct {
 
 // DefaultConfig returns a config with sensible defaults.
 func DefaultConfig() *Config {
+	copyTerminfo := true
+	defaultPermsGH := true
+	sshRetryGH := true
+
 	return &Config{
 		Defaults: Defaults{
-			Machine:      "xLargePremiumLinux",
-			IdleTimeout:  240,
-			Devcontainer: ".devcontainer/devcontainer.json",
+			Machine:            "xLargePremiumLinux",
+			IdleTimeout:        240,
+			Devcontainer:       ".devcontainer/devcontainer.json",
+			DefaultPermissions: false,
+			SSHRetry:           false,
+			CopyTerminfo:       &copyTerminfo,
 		},
 		Repos: map[string]Repo{
 			"github/github": {
-				Alias: "gh",
-				Ports: []int{80},
+				Alias:              "gh",
+				Ports:              []int{80},
+				DefaultPermissions: &defaultPermsGH,
+				SSHRetry:           &sshRetryGH,
 			},
 			"github/meuse": {
 				Alias: "meuse",
@@ -61,9 +83,12 @@ func DefaultConfig() *Config {
 				Alias: "bp",
 			},
 		},
+		Hooks: Hooks{
+			PostCreate: []string{},
+		},
 		Terminal: Terminal{
 			SetTabTitle: true,
-			TitleFormat: "CS: {repo}:{branch}",
+			TitleFormat: "CS: {short_repo}:{branch}",
 		},
 	}
 }
@@ -159,4 +184,48 @@ func (c *Config) GetRepoConfig(repo string) *Repo {
 		return &cfg
 	}
 	return nil
+}
+
+// GetEffectiveMachine returns the machine type for a repo,
+// falling back to the default if not specified.
+func (c *Config) GetEffectiveMachine(repo string) string {
+	if repoCfg := c.GetRepoConfig(repo); repoCfg != nil && repoCfg.Machine != "" {
+		return repoCfg.Machine
+	}
+	return c.Defaults.Machine
+}
+
+// GetEffectiveDevcontainer returns the devcontainer path for a repo,
+// falling back to the default if not specified.
+func (c *Config) GetEffectiveDevcontainer(repo string) string {
+	if repoCfg := c.GetRepoConfig(repo); repoCfg != nil && repoCfg.Devcontainer != "" {
+		return repoCfg.Devcontainer
+	}
+	return c.Defaults.Devcontainer
+}
+
+// GetEffectiveDefaultPermissions returns whether to auto-accept permissions for a repo,
+// falling back to the default if not specified.
+func (c *Config) GetEffectiveDefaultPermissions(repo string) bool {
+	if repoCfg := c.GetRepoConfig(repo); repoCfg != nil && repoCfg.DefaultPermissions != nil {
+		return *repoCfg.DefaultPermissions
+	}
+	return c.Defaults.DefaultPermissions
+}
+
+// GetEffectiveSSHRetry returns whether to use SSH retry for a repo,
+// falling back to the default if not specified.
+func (c *Config) GetEffectiveSSHRetry(repo string) bool {
+	if repoCfg := c.GetRepoConfig(repo); repoCfg != nil && repoCfg.SSHRetry != nil {
+		return *repoCfg.SSHRetry
+	}
+	return c.Defaults.SSHRetry
+}
+
+// GetEffectiveCopyTerminfo returns whether to copy terminfo after creation.
+func (c *Config) GetEffectiveCopyTerminfo() bool {
+	if c.Defaults.CopyTerminfo != nil {
+		return *c.Defaults.CopyTerminfo
+	}
+	return true // default to true if not set
 }
