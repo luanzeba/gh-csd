@@ -32,6 +32,12 @@ var sshCmd = &cobra.Command{
 By default, connects to the currently selected codespace.
 Use --retry to automatically reconnect on disconnect.
 
+The --retry flag can be set as a default for specific repos in config:
+
+    repos:
+      github/github:
+        ssh_retry: true
+
 rdm (remote-development-manager) enables clipboard and open functionality
 between your local machine and the codespace.`,
 	Args: cobra.MaximumNArgs(1),
@@ -48,6 +54,12 @@ func init() {
 }
 
 func runSSH(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
+		cfg = config.DefaultConfig()
+	}
+
 	// Determine which codespace to connect to
 	name := sshCodespace
 	if name == "" && len(args) > 0 {
@@ -80,7 +92,14 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	// Set terminal tab title if configured
 	setTabTitleForCodespace(cs)
 
-	if sshRetry {
+	// Determine if we should use retry: flag overrides config
+	useRetry := sshRetry
+	if !cmd.Flags().Changed("retry") {
+		// Use per-repo config if flag not explicitly set
+		useRetry = cfg.GetEffectiveSSHRetry(cs.Repository)
+	}
+
+	if useRetry {
 		return sshWithRetry(name, cs)
 	}
 	return sshOnce(name)
