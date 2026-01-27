@@ -15,12 +15,13 @@ import (
 )
 
 var (
-	createMachine        string
-	createDevcontainer   string
-	createBranch         string
-	createNoSSH          bool
-	createNoTerminfo     bool
-	createNoNotify       bool
+	createMachine            string
+	createDevcontainer       string
+	createBranch             string
+	createNoSSH              bool
+	createNoTerminfo         bool
+	createNoNotify           bool
+	createDefaultPermissions bool
 )
 
 var createCmd = &cobra.Command{
@@ -30,9 +31,13 @@ var createCmd = &cobra.Command{
 
 Repo can be a full name (owner/repo) or an alias defined in config.
 After creation:
-1. Copies Ghostty terminfo for terminal support
-2. Sends a desktop notification when ready
-3. SSHes into the codespace with rdm forwarding
+1. Copies Ghostty terminfo for terminal support (configurable)
+2. Runs post-create hooks if defined
+3. Sends a desktop notification when ready
+4. SSHes into the codespace with rdm forwarding
+
+Settings like machine type, permissions, and SSH retry can be configured
+per-repo in ~/.config/gh-csd/config.yaml.
 
 Use --no-ssh to just create without connecting.`,
 	Args: cobra.ExactArgs(1),
@@ -40,12 +45,13 @@ Use --no-ssh to just create without connecting.`,
 }
 
 func init() {
-	createCmd.Flags().StringVarP(&createMachine, "machine", "m", "xLargePremiumLinux", "Machine type")
-	createCmd.Flags().StringVarP(&createDevcontainer, "devcontainer", "d", ".devcontainer/devcontainer.json", "Devcontainer path")
+	createCmd.Flags().StringVarP(&createMachine, "machine", "m", "", "Machine type (default from config)")
+	createCmd.Flags().StringVarP(&createDevcontainer, "devcontainer", "d", "", "Devcontainer path (default from config)")
 	createCmd.Flags().StringVarP(&createBranch, "branch", "b", "", "Branch to create codespace from")
 	createCmd.Flags().BoolVar(&createNoSSH, "no-ssh", false, "Don't SSH after creation")
 	createCmd.Flags().BoolVar(&createNoTerminfo, "no-terminfo", false, "Don't copy Ghostty terminfo")
 	createCmd.Flags().BoolVar(&createNoNotify, "no-notify", false, "Don't send desktop notification")
+	createCmd.Flags().BoolVarP(&createDefaultPermissions, "default-permissions", "y", false, "Accept default permissions (skip prompt)")
 	rootCmd.AddCommand(createCmd)
 }
 
@@ -65,14 +71,20 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Creating codespace for %s...\n", repo)
 
-	// Get defaults from config, but flags override
-	machine := createMachine
-	devcontainer := createDevcontainer
-	if !cmd.Flags().Changed("machine") && cfg.Defaults.Machine != "" {
-		machine = cfg.Defaults.Machine
+	// Get effective settings: flags override per-repo config, which overrides defaults
+	machine := cfg.GetEffectiveMachine(repo)
+	if cmd.Flags().Changed("machine") {
+		machine = createMachine
 	}
-	if !cmd.Flags().Changed("devcontainer") && cfg.Defaults.Devcontainer != "" {
-		devcontainer = cfg.Defaults.Devcontainer
+
+	devcontainer := cfg.GetEffectiveDevcontainer(repo)
+	if cmd.Flags().Changed("devcontainer") {
+		devcontainer = createDevcontainer
+	}
+
+	useDefaultPermissions := cfg.GetEffectiveDefaultPermissions(repo)
+	if cmd.Flags().Changed("default-permissions") {
+		useDefaultPermissions = createDefaultPermissions
 	}
 
 	// Build gh cs create command
@@ -85,15 +97,18 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if createBranch != "" {
 		createArgs = append(createArgs, "-b", createBranch)
 	}
+	if useDefaultPermissions {
+		createArgs = append(createArgs, "--default-permissions")
+	}
 
 	// Create the codespace
-	createCmd := exec.Command("gh", createArgs...)
-	var stdout, stderr bytes.Buffer
-	createCmd.Stdout = &stdout
-	createCmd.Stderr = os.Stderr
+	ghCreateCmd := exec.Command("gh", createArgs...)
+	var stdout bytes.Buffer
+	ghCreateCmd.Stdout = &stdout
+	ghCreateCmd.Stderr = os.Stderr
 
-	if err := createCmd.Run(); err != nil {
-		return fmt.Errorf("failed to create codespace: %w\n%s", err, stderr.String())
+	if err := ghCreateCmd.Run(); err != nil {
+		return fmt.Errorf("failed to create codespace: %w", err)
 	}
 
 	name := strings.TrimSpace(stdout.String())
@@ -108,11 +123,28 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save current codespace: %v\n", err)
 	}
 
-	// Copy Ghostty terminfo
-	if !createNoTerminfo {
+	// Copy Ghostty terminfo (check both flag and config)
+	copyTerminfoEnabled := cfg.GetEffectiveCopyTerminfo() && !createNoTerminfo
+	if copyTerminfoEnabled {
 		fmt.Println("Copying Ghostty terminfo...")
 		if err := copyTerminfo(name); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to copy terminfo: %v\n", err)
+		}
+	}
+
+	// Run post-create hooks
+	if len(cfg.Hooks.PostCreate) > 0 {
+		// Get codespace info for placeholders
+		cs, _ := gh.GetCodespace(name)
+		branch := ""
+		if cs != nil {
+			branch = cs.Branch
+		}
+
+		for _, hook := range cfg.Hooks.PostCreate {
+			if err := runHook(hook, name, repo, branch); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: hook failed: %v\n", err)
+			}
 		}
 	}
 
@@ -125,10 +157,20 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// SSH into the codespace
+	// SSH into the codespace, using per-repo retry setting
 	fmt.Println("Connecting...")
 	sshNoRdm = false
-	sshRetry = false
+	sshRetry = cfg.GetEffectiveSSHRetry(repo)
+
+	cs, err := gh.GetCodespace(name)
+	if err != nil {
+		// Fall back to simple SSH if we can't get codespace info
+		return sshOnce(name)
+	}
+
+	if sshRetry {
+		return sshWithRetry(name, cs)
+	}
 	return sshOnce(name)
 }
 
@@ -176,6 +218,32 @@ func sendNotification(title, message string) {
 	case "linux":
 		exec.Command("notify-send", title, message).Run()
 	}
+}
+
+// runHook executes a hook command with placeholder substitution.
+// Supported placeholders: {name}, {repo}, {branch}, {short_repo}
+func runHook(hook, name, repo, branch string) error {
+	// Extract short repo name
+	shortRepo := repo
+	if parts := strings.Split(repo, "/"); len(parts) > 1 {
+		shortRepo = parts[len(parts)-1]
+	}
+
+	// Replace placeholders
+	cmd := hook
+	cmd = strings.ReplaceAll(cmd, "{name}", name)
+	cmd = strings.ReplaceAll(cmd, "{repo}", repo)
+	cmd = strings.ReplaceAll(cmd, "{branch}", branch)
+	cmd = strings.ReplaceAll(cmd, "{short_repo}", shortRepo)
+
+	fmt.Printf("Running hook: %s\n", cmd)
+
+	// Execute via shell
+	hookCmd := exec.Command("sh", "-c", cmd)
+	hookCmd.Stdout = os.Stdout
+	hookCmd.Stderr = os.Stderr
+
+	return hookCmd.Run()
 }
 
 // Helper function to check if a codespace with the given repo already exists
