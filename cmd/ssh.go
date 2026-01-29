@@ -17,17 +17,17 @@ import (
 )
 
 var (
-	sshRetry       bool
-	sshRetryDelay  int
-	sshMaxRetries  int
-	sshNoRdm       bool
-	sshCodespace   string
+	sshRetry      bool
+	sshRetryDelay int
+	sshMaxRetries int
+	sshNoRdm      bool
+	sshCodespace  string
 )
 
 var sshCmd = &cobra.Command{
 	Use:   "ssh [codespace-name]",
-	Short: "SSH into a codespace with rdm support",
-	Long: `SSH into a codespace with optional rdm socket forwarding.
+	Short: "SSH into a codespace with rdm and local exec support",
+	Long: `SSH into a codespace with socket forwarding for rdm and local command execution.
 
 By default, connects to the currently selected codespace.
 Use --retry to automatically reconnect on disconnect.
@@ -38,8 +38,14 @@ The --retry flag can be set as a default for specific repos in config:
       github/github:
         ssh_retry: true
 
-rdm (remote-development-manager) enables clipboard and open functionality
-between your local machine and the codespace.`,
+Socket forwarding:
+  - rdm: enables clipboard (copy/paste) and open functionality
+  - csd: enables 'gh csd local' for running commands on your local machine
+
+To use local command execution:
+  1. Start the server on local: gh csd server start
+  2. Connect via:              gh csd ssh
+  3. In codespace:             gh csd local gh pr create ...`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runSSH,
 }
@@ -172,13 +178,25 @@ func sshWithRetry(name string, cs *gh.Codespace) error {
 func buildSSHArgs(name string) []string {
 	args := []string{"cs", "ssh", "-c", name}
 
+	var sshArgs []string
+
 	if !sshNoRdm {
-		// Add rdm socket forwarding
-		// rdm listens on ~/.rdm/rdm.socket on the remote
+		// Add rdm socket forwarding for clipboard/open
 		rdmSocket := getRdmSocketPath()
 		if rdmSocket != "" {
-			args = append(args, "--", "-R", fmt.Sprintf("/home/linuxbrew/.rdm/rdm.socket:%s", rdmSocket))
+			sshArgs = append(sshArgs, "-R", fmt.Sprintf("/home/linuxbrew/.rdm/rdm.socket:%s", rdmSocket))
 		}
+	}
+
+	// Add csd socket forwarding for local command execution
+	csdSocket := GetServerSocketPath()
+	if _, err := os.Stat(csdSocket); err == nil {
+		sshArgs = append(sshArgs, "-R", fmt.Sprintf("/home/linuxbrew/.csd/csd.socket:%s", csdSocket))
+	}
+
+	if len(sshArgs) > 0 {
+		args = append(args, "--")
+		args = append(args, sshArgs...)
 	}
 
 	return args
