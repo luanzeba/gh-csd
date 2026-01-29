@@ -80,11 +80,10 @@ func selectCodespaceInteractive() (string, error) {
 		return "", fmt.Errorf("no codespaces found")
 	}
 
-	// Pipe to fzf with --tac --ansi --header-lines=1
+	// Pipe to fzf with --tac --ansi (matches csw behavior)
 	// --tac: reverse order so newest codespace is at bottom (where fzf cursor starts)
 	// --ansi: preserve colors from gh cs list
-	// --header-lines=1: treat first line as header
-	fzfCmd := exec.Command("fzf", "--tac", "--ansi", "--header-lines=1")
+	fzfCmd := exec.Command("fzf", "--tac", "--ansi")
 	fzfCmd.Stdin = bytes.NewReader(ghOutput)
 	fzfCmd.Stderr = os.Stderr
 
