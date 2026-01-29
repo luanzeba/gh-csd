@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"github.com/luanzeba/gh-csd/internal/gh"
 	"github.com/luanzeba/gh-csd/internal/state"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var selectCmd = &cobra.Command{
@@ -59,33 +61,31 @@ func runSelect(cmd *cobra.Command, args []string) error {
 }
 
 func selectCodespaceInteractive() (string, error) {
-	codespaces, err := gh.ListCodespaces()
-	if err != nil {
-		return "", err
+	// Get terminal width (subtract 3 like csw does)
+	width := 80 // default
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+		width = w - 3
 	}
 
-	if len(codespaces) == 0 {
+	// Run gh cs list with TTY forcing for colored, aligned output
+	ghCmd := exec.Command("gh", "cs", "list")
+	ghCmd.Env = append(os.Environ(), fmt.Sprintf("GH_FORCE_TTY=%d", width))
+
+	ghOutput, err := ghCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("gh cs list failed: %w", err)
+	}
+
+	if len(bytes.TrimSpace(ghOutput)) == 0 {
 		return "", fmt.Errorf("no codespaces found")
 	}
 
-	// Build fzf input: "name | repo | branch | state"
-	var lines []string
-	for _, cs := range codespaces {
-		line := fmt.Sprintf("%s\t%s\t%s\t%s", cs.Name, cs.Repository, cs.Branch, cs.State)
-		lines = append(lines, line)
-	}
-
-	input := strings.Join(lines, "\n")
-
-	// Run fzf
-	fzfCmd := exec.Command("fzf",
-		"--header", "Select a codespace",
-		"--delimiter", "\t",
-		"--with-nth", "2,3,4",
-		"--preview", "gh cs view {1}",
-		"--preview-window", "right:50%:wrap",
-	)
-	fzfCmd.Stdin = strings.NewReader(input)
+	// Pipe to fzf with --tac --ansi --header-lines=1
+	// --tac: reverse order so newest codespace is at bottom (where fzf cursor starts)
+	// --ansi: preserve colors from gh cs list
+	// --header-lines=1: treat first line as header
+	fzfCmd := exec.Command("fzf", "--tac", "--ansi", "--header-lines=1")
+	fzfCmd.Stdin = bytes.NewReader(ghOutput)
 	fzfCmd.Stderr = os.Stderr
 
 	output, err := fzfCmd.Output()
@@ -96,12 +96,12 @@ func selectCodespaceInteractive() (string, error) {
 		return "", fmt.Errorf("fzf failed: %w", err)
 	}
 
-	// Extract the codespace name (first field)
+	// Extract codespace name (first whitespace-separated field)
 	selected := strings.TrimSpace(string(output))
-	parts := strings.Split(selected, "\t")
-	if len(parts) == 0 {
+	fields := strings.Fields(selected)
+	if len(fields) == 0 {
 		return "", fmt.Errorf("no selection made")
 	}
 
-	return parts[0], nil
+	return fields[0], nil
 }
