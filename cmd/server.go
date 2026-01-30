@@ -63,6 +63,15 @@ var serverSocketCmd = &cobra.Command{
 // Only 'gh' is allowed by default for security.
 var allowedCommands = []string{"gh"}
 
+// Common paths where commands might be installed.
+// launchd services run with minimal PATH, so we need to search.
+var commonPaths = []string{
+	"/opt/homebrew/bin",
+	"/usr/local/bin",
+	"/usr/bin",
+	"/bin",
+}
+
 func init() {
 	serverCmd.AddCommand(serverStartCmd)
 	serverCmd.AddCommand(serverStopCmd)
@@ -142,8 +151,12 @@ func (s *Server) handleExec(w http.ResponseWriter, req *protocol.ExecRequest) {
 
 	s.logger.Printf("executing: %v", req.Command)
 
+	// Resolve command path (launchd services have minimal PATH)
+	cmdPath := resolveCommand(req.Command[0])
+	s.logger.Printf("resolved command path: %s -> %s", req.Command[0], cmdPath)
+
 	// Execute command
-	cmd := exec.Command(req.Command[0], req.Command[1:]...)
+	cmd := exec.Command(cmdPath, req.Command[1:]...)
 	if req.Workdir != "" {
 		cmd.Dir = req.Workdir
 	}
@@ -190,6 +203,31 @@ func isAllowedCommand(cmd string) bool {
 		}
 	}
 	return false
+}
+
+// resolveCommand finds the full path to a command.
+// It first checks if the command is already an absolute path,
+// then searches in common paths, and finally falls back to exec.LookPath.
+func resolveCommand(cmd string) string {
+	// If already absolute, use as-is
+	if filepath.IsAbs(cmd) {
+		return cmd
+	}
+
+	// Search in common paths
+	for _, dir := range commonPaths {
+		fullPath := filepath.Join(dir, cmd)
+		if _, err := os.Stat(fullPath); err == nil {
+			return fullPath
+		}
+	}
+
+	// Fall back to PATH lookup
+	if path, err := exec.LookPath(cmd); err == nil {
+		return path
+	}
+
+	return cmd
 }
 
 func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
