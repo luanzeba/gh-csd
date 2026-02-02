@@ -181,10 +181,11 @@ func buildSSHArgs(name string) []string {
 	var sshArgs []string
 
 	if !sshNoRdm {
-		// Add rdm socket forwarding for clipboard/open
+		// Add rdm TCP port forwarding for clipboard/open
+		// rdm clients in SSH sessions connect to localhost:7391
 		rdmSocket := getRdmSocketPath()
 		if rdmSocket != "" {
-			sshArgs = append(sshArgs, "-R", fmt.Sprintf("/home/linuxbrew/.rdm/rdm.socket:%s", rdmSocket))
+			sshArgs = append(sshArgs, "-R", fmt.Sprintf("127.0.0.1:7391:%s", rdmSocket))
 		}
 	}
 
@@ -203,13 +204,18 @@ func buildSSHArgs(name string) []string {
 }
 
 func getRdmSocketPath() string {
-	// Check if rdm is running and get socket path
-	home, err := os.UserHomeDir()
+	// Get the actual rdm socket path by running `rdm socket`
+	// rdm uses os.TempDir() + "/rdm.sock" which varies by system
+	cmd := exec.Command("rdm", "socket")
+	output, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 
-	socketPath := home + "/.rdm/rdm.socket"
+	socketPath := string(output)
+	socketPath = socketPath[:len(socketPath)-1] // Remove trailing newline
+
+	// Verify socket exists
 	if _, err := os.Stat(socketPath); err == nil {
 		return socketPath
 	}
