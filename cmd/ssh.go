@@ -190,9 +190,12 @@ func buildSSHArgs(name string) []string {
 	}
 
 	// Add csd socket forwarding for local command execution
+	// Forward to ~/.csd/csd.socket in the Codespace (matches local path structure)
 	csdSocket := GetServerSocketPath()
 	if _, err := os.Stat(csdSocket); err == nil {
-		sshArgs = append(sshArgs, "-R", fmt.Sprintf("/home/linuxbrew/.csd/csd.socket:%s", csdSocket))
+		// Use $HOME/.csd/csd.socket as the remote path
+		// SSH will expand ~ on the remote side
+		sshArgs = append(sshArgs, "-R", fmt.Sprintf("~/.csd/csd.socket:%s", csdSocket))
 	}
 
 	if len(sshArgs) > 0 {

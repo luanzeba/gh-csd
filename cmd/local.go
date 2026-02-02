@@ -49,8 +49,14 @@ func init() {
 // getRemoteSocketPath returns the path where the socket is forwarded
 // inside a Codespace.
 func getRemoteSocketPath() string {
-	// When in Codespace, the socket is forwarded here via SSH
-	return "/home/linuxbrew/.csd/csd.socket"
+	// When in Codespace, the socket is forwarded to ~/.csd/csd.socket
+	// This matches the local path structure and avoids hardcoded paths
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Fallback for edge cases
+		return "/home/codespace/.csd/csd.socket"
+	}
+	return home + "/.csd/csd.socket"
 }
 
 func runLocal(cmd *cobra.Command, args []string) error {
