@@ -165,13 +165,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	cs, err := gh.GetCodespace(name)
 	if err != nil {
 		// Fall back to simple SSH if we can't get codespace info
-		return sshOnce(name)
+		return sshOnce(name, cfg, repo)
 	}
 
 	if sshRetry {
-		return sshWithRetry(name, cs)
+		return sshWithRetry(name, cs, cfg)
 	}
-	return sshOnce(name)
+	return sshOnce(name, cfg, repo)
 }
 
 // expandRepoAlias is deprecated - use config.ResolveAlias instead

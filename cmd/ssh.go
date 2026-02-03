@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -106,12 +108,23 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	}
 
 	if useRetry {
-		return sshWithRetry(name, cs)
+		return sshWithRetry(name, cs, cfg)
 	}
-	return sshOnce(name)
+	return sshOnce(name, cfg, cs.Repository)
 }
 
-func sshOnce(name string) error {
+func sshOnce(name string, cfg *config.Config, repo string) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start port forwarding if configured
+	var ports []int
+	if repoCfg := cfg.GetRepoConfig(repo); repoCfg != nil {
+		ports = repoCfg.Ports
+	}
+	portFwdCmd := startPortForwarding(ctx, name, ports)
+	defer stopPortForwarding(portFwdCmd)
+
 	args := buildSSHArgs(name)
 	cmd := exec.Command("gh", args...)
 	cmd.Stdin = os.Stdin
@@ -121,16 +134,26 @@ func sshOnce(name string) error {
 	return cmd.Run()
 }
 
-func sshWithRetry(name string, cs *gh.Codespace) error {
+func sshWithRetry(name string, cs *gh.Codespace, cfg *config.Config) error {
 	retries := 0
 
 	// Handle Ctrl+C gracefully
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
+	// Get ports config once
+	var ports []int
+	if repoCfg := cfg.GetRepoConfig(cs.Repository); repoCfg != nil {
+		ports = repoCfg.Ports
+	}
+
 	for {
 		// Refresh tab title on reconnect
 		setTabTitleForCodespace(cs)
+
+		// Start port forwarding for this connection attempt
+		ctx, cancel := context.WithCancel(context.Background())
+		portFwdCmd := startPortForwarding(ctx, name, ports)
 
 		args := buildSSHArgs(name)
 		cmd := exec.Command("gh", args...)
@@ -139,6 +162,10 @@ func sshWithRetry(name string, cs *gh.Codespace) error {
 		cmd.Stderr = os.Stderr
 
 		err := cmd.Run()
+
+		// Stop port forwarding when SSH exits
+		cancel()
+		stopPortForwarding(portFwdCmd)
 
 		// Check for intentional exit (exit code 0 or user interrupt)
 		if err == nil {
@@ -224,6 +251,57 @@ func getRdmSocketPath() string {
 	}
 
 	return ""
+}
+
+// startPortForwarding starts gh cs ports forward in the background.
+// Returns the exec.Cmd (for cleanup) or nil if no ports configured.
+func startPortForwarding(ctx context.Context, codespaceName string, ports []int) *exec.Cmd {
+	if len(ports) == 0 {
+		return nil
+	}
+
+	// Build args: gh cs ports forward 80:80 3000:3000 -c <name>
+	args := []string{"cs", "ports", "forward"}
+	for _, port := range ports {
+		args = append(args, fmt.Sprintf("%d:%d", port, port))
+	}
+	args = append(args, "-c", codespaceName)
+
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	// Discard output to prevent escape sequence leakage into SSH session
+	// (gh cs ports forward may query cursor position, causing ^[[...R responses)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to start port forwarding: %v\n", err)
+		return nil
+	}
+
+	// Log which ports are being forwarded (we print our own message since gh output is discarded)
+	portStrs := make([]string, len(ports))
+	for i, p := range ports {
+		portStrs[i] = fmt.Sprintf("%d", p)
+	}
+	fmt.Printf("Forwarding ports: %s\n", strings.Join(portStrs, ", "))
+
+	return cmd
+}
+
+// stopPortForwarding gracefully stops the port forwarding process.
+func stopPortForwarding(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	cmd.Process.Signal(syscall.SIGTERM)
+	// Give it a moment to clean up, then wait
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		cmd.Process.Kill()
+	}
 }
 
 func setTabTitleForCodespace(cs *gh.Codespace) {
