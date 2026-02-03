@@ -68,15 +68,13 @@ func selectCodespaceInteractive() (string, error) {
 	}
 
 	// Run gh cs list with TTY forcing for colored, aligned output
-	ghCmd := exec.Command("gh", "cs", "list")
-	ghCmd.Env = append(os.Environ(), fmt.Sprintf("GH_FORCE_TTY=%d", width))
-
-	ghOutput, err := ghCmd.Output()
+	env := []string{fmt.Sprintf("GH_FORCE_TTY=%d", width)}
+	result, err := gh.RunWithEnv(env, "cs", "list")
 	if err != nil {
-		return "", fmt.Errorf("gh cs list failed: %w", err)
+		return "", err
 	}
 
-	if len(bytes.TrimSpace(ghOutput)) == 0 {
+	if len(bytes.TrimSpace(result.Stdout)) == 0 {
 		return "", fmt.Errorf("no codespaces found")
 	}
 
@@ -84,7 +82,7 @@ func selectCodespaceInteractive() (string, error) {
 	// --tac: reverse order so newest codespace is at bottom (where fzf cursor starts)
 	// --ansi: preserve colors from gh cs list
 	fzfCmd := exec.Command("fzf", "--tac", "--ansi")
-	fzfCmd.Stdin = bytes.NewReader(ghOutput)
+	fzfCmd.Stdin = bytes.NewReader(result.Stdout)
 	fzfCmd.Stderr = os.Stderr
 
 	output, err := fzfCmd.Output()
