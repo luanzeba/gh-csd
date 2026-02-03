@@ -2,10 +2,8 @@
 package gh
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 )
 
 // Codespace represents a GitHub Codespace.
@@ -32,17 +30,13 @@ type codespaceJSON struct {
 
 // ListCodespaces returns all codespaces for the authenticated user.
 func ListCodespaces() ([]Codespace, error) {
-	cmd := exec.Command("gh", "cs", "list", "--json", "name,displayName,state,repository,gitStatus,machineName")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("gh cs list failed: %w\n%s", err, stderr.String())
+	result, err := Run("cs", "list", "--json", "name,displayName,state,repository,gitStatus,machineName")
+	if err != nil {
+		return nil, err
 	}
 
 	var raw []codespaceJSON
-	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+	if err := json.Unmarshal(result.Stdout, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse codespaces: %w", err)
 	}
 
