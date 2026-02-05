@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"github.com/luanzeba/gh-csd/internal/gh"
 	"github.com/luanzeba/gh-csd/internal/state"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -109,34 +111,35 @@ func runDelete(cmd *cobra.Command, args []string) error {
 }
 
 func selectCodespacesForDeletion() ([]string, error) {
-	codespaces, err := gh.ListCodespaces()
+	// Get terminal width (subtract 3 like select does)
+	width := 80 // default
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+		width = w - 3
+	}
+
+	// Run gh cs list with TTY forcing for colored, aligned output
+	env := []string{fmt.Sprintf("GH_FORCE_TTY=%d", width)}
+	result, err := gh.RunWithEnv(env, "cs", "list")
 	if err != nil {
 		return nil, err
 	}
 
-	if len(codespaces) == 0 {
+	if len(bytes.TrimSpace(result.Stdout)) == 0 {
 		return nil, fmt.Errorf("no codespaces found")
 	}
 
-	// Build fzf input
-	var lines []string
-	for _, cs := range codespaces {
-		line := fmt.Sprintf("%s\t%s\t%s\t%s", cs.Name, cs.Repository, cs.Branch, cs.State)
-		lines = append(lines, line)
-	}
-
-	input := strings.Join(lines, "\n")
-
 	// Run fzf with multi-select
+	// --tac: reverse order so newest codespace is at bottom (where fzf cursor starts)
+	// --ansi: preserve colors from gh cs list
+	// --bind 'tab:toggle+up': Tab toggles selection and moves cursor up (for bottom-up selection)
 	fzfCmd := exec.Command("fzf",
 		"--multi",
+		"--tac",
+		"--ansi",
 		"--header", "Select codespaces to delete (Tab to select, Enter to confirm)",
-		"--delimiter", "\t",
-		"--with-nth", "2,3,4",
-		"--preview", "gh cs view {1}",
-		"--preview-window", "right:50%:wrap",
+		"--bind", "tab:toggle+up",
 	)
-	fzfCmd.Stdin = strings.NewReader(input)
+	fzfCmd.Stdin = bytes.NewReader(result.Stdout)
 	fzfCmd.Stderr = os.Stderr
 
 	output, err := fzfCmd.Output()
@@ -147,15 +150,15 @@ func selectCodespacesForDeletion() ([]string, error) {
 		return nil, fmt.Errorf("fzf failed: %w", err)
 	}
 
-	// Parse selected codespaces
+	// Parse selected codespaces (first whitespace-separated field is the name)
 	var selected []string
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		if line == "" {
 			continue
 		}
-		parts := strings.Split(line, "\t")
-		if len(parts) > 0 {
-			selected = append(selected, parts[0])
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			selected = append(selected, fields[0])
 		}
 	}
 
