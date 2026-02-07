@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/luanzeba/gh-csd/internal/config"
 	"github.com/luanzeba/gh-csd/internal/gh"
@@ -202,12 +203,32 @@ func copyTerminfo(name string) error {
 		return fmt.Errorf("infocmp failed: %w", err)
 	}
 
-	// Pipe to tic on the remote
-	sshCmd := exec.Command("gh", "cs", "ssh", "-c", name, "--", "tic", "-x", "-")
-	sshCmd.Stdin = &terminfo
-	sshCmd.Stderr = os.Stderr
+	// Pipe to tic on the remote, with retry for transient SSH connection failures
+	const maxRetries = 3
+	const retryDelay = 2 * time.Second
 
-	return sshCmd.Run()
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		sshCmd := exec.Command("gh", "cs", "ssh", "-c", name, "--", "tic", "-x", "-")
+		// Need a fresh reader for each attempt since stdin is consumed
+		sshCmd.Stdin = bytes.NewReader(terminfo.Bytes())
+
+		// Capture stderr to avoid printing RPC errors on each retry attempt
+		var stderr bytes.Buffer
+		sshCmd.Stderr = &stderr
+
+		if err := sshCmd.Run(); err != nil {
+			lastErr = fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+			if attempt < maxRetries {
+				time.Sleep(retryDelay)
+				continue
+			}
+		} else {
+			return nil
+		}
+	}
+
+	return lastErr
 }
 
 func sendNotification(title, message string) {
