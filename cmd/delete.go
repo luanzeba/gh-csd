@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,15 +18,19 @@ import (
 var (
 	deleteForce bool
 	deleteAll   bool
+	deleteList  bool
 )
 
 var deleteCmd = &cobra.Command{
 	Use:   "delete [codespace-names...]",
-	Short: "Delete codespaces interactively",
+	Short: "Delete the current codespace or specified codespaces",
 	Long: `Delete one or more codespaces.
 
-Without arguments, opens an interactive fzf picker with multi-select.
-Use Tab to select multiple codespaces, Enter to confirm.
+Without arguments, deletes the currently selected codespace.
+Use --list to interactively select codespaces to delete with fzf (Tab to multi-select).
+
+If the codespace has unsaved changes, you will be prompted to confirm.
+Use --force to skip all confirmation prompts.
 
 If the current codespace is deleted, the selection is cleared.`,
 	RunE: runDelete,
@@ -34,6 +39,7 @@ If the current codespace is deleted, the selection is cleared.`,
 func init() {
 	deleteCmd.Flags().BoolVarP(&deleteForce, "force", "f", false, "Skip confirmation prompt")
 	deleteCmd.Flags().BoolVar(&deleteAll, "all", false, "Delete all codespaces (requires --force)")
+	deleteCmd.Flags().BoolVar(&deleteList, "list", false, "Interactively select codespaces to delete")
 	rootCmd.AddCommand(deleteCmd)
 }
 
@@ -51,15 +57,25 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		for _, cs := range codespaces {
 			toDelete = append(toDelete, cs.Name)
 		}
-	} else if len(args) > 0 {
-		toDelete = args
-	} else {
-		// Interactive multi-select
+	} else if deleteList {
+		// Interactive multi-select with fzf
 		selected, err := selectCodespacesForDeletion()
 		if err != nil {
 			return err
 		}
 		toDelete = selected
+	} else if len(args) > 0 {
+		toDelete = args
+	} else {
+		// Default: delete the current codespace
+		name, err := state.Get()
+		if err != nil {
+			if errors.Is(err, state.ErrNoCodespace) {
+				return fmt.Errorf("no codespace selected (use 'gh csd select' to select one, or --list to pick interactively)")
+			}
+			return err
+		}
+		toDelete = []string{name}
 	}
 
 	if len(toDelete) == 0 {
@@ -166,7 +182,13 @@ func selectCodespacesForDeletion() ([]string, error) {
 }
 
 func deleteCodespace(name string) error {
-	cmd := exec.Command("gh", "cs", "delete", "-c", name, "--force")
+	args := []string{"cs", "delete", "-c", name}
+	if deleteForce {
+		args = append(args, "--force")
+	}
+	cmd := exec.Command("gh", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
