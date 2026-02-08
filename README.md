@@ -4,9 +4,9 @@ A GitHub CLI extension for a seamless codespaces development experience.
 
 ## Motivation
 
-GitHub Codespaces offers a powerful cloud-based development environment, but the experience for developers who prefer working via SSH rather than VS Code can be rough around the edges. Connections drop without automatic reconnection, there's no easy way to copy text to your local clipboard or open URLs in your browser, and managing multiple codespaces requires remembering long auto-generated names.
+Working on GitHub Codespaces via SSH can be a bit painful sometimes. Bad Wi-Fi can cause the connections to drop consistently, there's no easy way to copy text to your local clipboard or open URLs in the browser, you have to manually forward ports for localhost development. Working with multiple codespaces can be a bit tricky because you always have to select the codespace for each command you run.
 
-gh-csd addresses these pain points by wrapping the standard `gh cs` commands with quality-of-life improvements. It introduces the concept of a "current codespace" that commands operate on by default, provides automatic SSH reconnection, integrates with [rdm](https://github.com/keith/rdm) for clipboard and open support, and offers conveniences like repository aliases and automatic port forwarding.
+gh-csd addresses these pain points by wrapping the standard `gh cs` commands with quality-of-life improvements. It introduces the concept of a "current codespace" that commands operate on by default, provides automatic SSH reconnection, integrates with [remote-development-manager](https://github.com/BlakeWilliams/remote-development-manager) for clipboard and open support, and offers conveniences like repository aliases and automatic port forwarding.
 
 ## Installation
 
@@ -60,7 +60,7 @@ You can configure this as the default behavior for specific repositories in your
 
 ### Clipboard and Open Support
 
-When you SSH into a codespace, you lose the ability to copy text to your local clipboard or open URLs in your browser. gh-csd integrates with [rdm](https://github.com/keith/rdm) by automatically forwarding the rdm socket during SSH sessions. With rdm running locally, you can use `rdm copy` and `rdm open` from inside your codespace.
+When you SSH into a codespace, you lose the ability to copy text to your local clipboard or open URLs in your browser. gh-csd integrates with [remote-development-manager](https://github.com/BlakeWilliams/remote-development-manager) by automatically forwarding the rdm socket during SSH sessions. With rdm running locally, you can use `rdm copy` and `rdm open` from inside your codespace.
 
 ### Port Forwarding
 
@@ -102,7 +102,7 @@ terminal:
   title_format: "{short_repo}:{branch}"
 ```
 
-This works with Ghostty, iTerm2, WezTerm, Alacritty, kitty, and other xterm-compatible terminals.
+(Still working out some issues in this feature)
 
 ### Ghostty Terminfo
 
