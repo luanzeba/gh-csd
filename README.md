@@ -121,6 +121,7 @@ Creating a codespace can take a minute or two. When using `gh csd create --ssh`,
 | `gh csd select` | Select a codespace as current (interactive picker) |
 | `gh csd get` | Print the current codespace name |
 | `gh csd delete` | Delete the current codespace, or use `--list` for multi-select |
+| `gh csd tui` | Interactive codespaces dashboard |
 | `gh csd config` | View or edit configuration |
 
 Run any command with `--help` for detailed usage information.

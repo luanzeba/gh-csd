@@ -4,19 +4,22 @@ package gh
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // Codespace represents a GitHub Codespace.
 type Codespace struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"displayName"`
-	State       string `json:"state"`
-	Repository  string `json:"repository"`
-	Branch      string `json:"gitStatus.ref"`
-	MachineName string `json:"machine.displayName"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"displayName"`
+	State       string    `json:"state"`
+	Repository  string    `json:"repository"`
+	Branch      string    `json:"gitStatus.ref"`
+	MachineName string    `json:"machineName"`
+	CreatedAt   time.Time `json:"createdAt"`
+	LastUsedAt  time.Time `json:"lastUsedAt"`
 }
 
-// codespaceJSON is used for parsing the gh cs list output
+// codespaceJSON is used for parsing the gh cs list output.
 type codespaceJSON struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
@@ -26,11 +29,13 @@ type codespaceJSON struct {
 		Ref string `json:"ref"`
 	} `json:"gitStatus"`
 	MachineName string `json:"machineName"`
+	CreatedAt   string `json:"createdAt"`
+	LastUsedAt  string `json:"lastUsedAt"`
 }
 
 // ListCodespaces returns all codespaces for the authenticated user.
 func ListCodespaces() ([]Codespace, error) {
-	result, err := Run("cs", "list", "--json", "name,displayName,state,repository,gitStatus,machineName")
+	result, err := Run("cs", "list", "--json", "name,displayName,state,repository,gitStatus,machineName,createdAt,lastUsedAt")
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +54,8 @@ func ListCodespaces() ([]Codespace, error) {
 			Repository:  cs.Repository,
 			Branch:      cs.GitStatus.Ref,
 			MachineName: cs.MachineName,
+			CreatedAt:   parseTime(cs.CreatedAt),
+			LastUsedAt:  parseTime(cs.LastUsedAt),
 		}
 	}
 
@@ -83,4 +90,20 @@ func GetCodespace(name string) (*Codespace, error) {
 		}
 	}
 	return nil, fmt.Errorf("codespace %q not found", name)
+}
+
+func parseTime(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed
+	}
+
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed
+	}
+
+	return time.Time{}
 }
