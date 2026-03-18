@@ -31,6 +31,8 @@ repos:
     alias: bp
 
 hooks:
+  pre_create:
+    - echo "About to create codespace for {repo}"
   post_create:
     - echo "Codespace {name} created for {repo}"
 
@@ -103,13 +105,14 @@ Commands to run at various lifecycle points. Hooks support placeholder substitut
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `pre_create` | []string | `[]` | Commands to run before codespace creation |
 | `post_create` | []string | `[]` | Commands to run after codespace creation |
 
 #### Available Placeholders
 
 | Placeholder | Description | Example |
 |-------------|-------------|---------|
-| `{name}` | Codespace name | `super-robot-abc123` |
+| `{name}` | Codespace name (empty during `pre_create`) | `super-robot-abc123` |
 | `{repo}` | Full repository name | `github/github` |
 | `{short_repo}` | Repository name without owner | `github` |
 | `{branch}` | Branch name | `main` |
@@ -118,15 +121,43 @@ Commands to run at various lifecycle points. Hooks support placeholder substitut
 
 ```yaml
 hooks:
+  pre_create:
+    # Sync Pi's Copilot refresh token into a Codespaces user secret
+    - jq -r '."github-copilot".refresh // empty' ~/.pi/agent/auth.json | gh secret set PI_GITHUB_COPILOT_REFRESH_TOKEN --user --app codespaces
+
   post_create:
     # Log creation
     - echo "Created {name} for {repo} on {branch}"
-    
+
     # Run a setup script on the codespace
     - gh cs ssh -c {name} -- ./setup.sh
-    
+
     # Notify via external service
     - curl -X POST "https://api.example.com/notify?cs={name}"
+```
+
+#### Example: Pre-create Hook with TTL Cache
+
+If you don't want to update the secret on every create, you can gate it with a local timestamp file:
+
+```yaml
+hooks:
+  pre_create:
+    - |
+      sh -c '
+      stamp="$HOME/.csd/pi-auth-sync.stamp"
+      ttl=$((24*60*60))
+      now=$(date +%s)
+      last=0
+      [ -f "$stamp" ] && last=$(cat "$stamp" 2>/dev/null || echo 0)
+      if [ $((now-last)) -lt "$ttl" ]; then
+        exit 0
+      fi
+      token=$(jq -r ".\"github-copilot\".refresh // empty" "$HOME/.pi/agent/auth.json")
+      [ -z "$token" ] && exit 0
+      printf "%s" "$token" | gh secret set PI_GITHUB_COPILOT_REFRESH_TOKEN --user --app codespaces
+      printf "%s" "$now" > "$stamp"
+      '
 ```
 
 ### `terminal`

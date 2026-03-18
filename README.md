@@ -112,6 +112,21 @@ If you use [Ghostty](https://ghostty.org/), gh-csd automatically copies the term
 
 Creating a codespace can take a minute or two. When using `gh csd create --ssh`, you'll receive a desktop notification when the codespace is ready and the SSH connection is established. Disable this with `--no-notify` if preferred.
 
+### Lifecycle Hooks
+
+Run custom commands before or after creation with config hooks:
+
+```yaml
+hooks:
+  pre_create:
+    # Keep Pi auth secret fresh before new Codespaces
+    - jq -r '."github-copilot".refresh // empty' ~/.pi/agent/auth.json | gh secret set PI_GITHUB_COPILOT_REFRESH_TOKEN --user --app codespaces
+  post_create:
+    - echo "Created {name} for {repo}"
+```
+
+See [CONFIG.md](CONFIG.md) for placeholders and a TTL-gated pre-create example.
+
 ## Commands
 
 | Command | Description |
@@ -148,6 +163,10 @@ repos:
     machine: "xLargePremiumLinux"
     ssh_retry: true
     ports: [80]
+
+hooks:
+  pre_create:
+    - jq -r '."github-copilot".refresh // empty' ~/.pi/agent/auth.json | gh secret set PI_GITHUB_COPILOT_REFRESH_TOKEN --user --app codespaces
 
 terminal:
   set_tab_title: true
