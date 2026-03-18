@@ -31,11 +31,13 @@ var createCmd = &cobra.Command{
 	Long: `Create a new codespace for the specified repository.
 
 Repo can be a full name (owner/repo) or an alias defined in config.
-After creation:
-1. Copies Ghostty terminfo for terminal support (configurable)
-2. Runs post-create hooks if defined
-3. Sends a desktop notification when ready
-4. SSHes into the codespace with rdm forwarding
+Workflow:
+1. Runs pre-create hooks if defined
+2. Creates the codespace
+3. Copies Ghostty terminfo for terminal support (configurable)
+4. Runs post-create hooks if defined
+5. Sends a desktop notification when ready
+6. SSHes into the codespace with rdm forwarding
 
 Settings like machine type, permissions, and SSH retry can be configured
 per-repo in ~/.config/gh-csd/config.yaml.
@@ -88,6 +90,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		useDefaultPermissions = createDefaultPermissions
 	}
 
+	// Run pre-create hooks
+	runHooks("pre-create", cfg.Hooks.PreCreate, "", repo, createBranch)
+
 	// Build gh cs create command
 	createArgs := []string{"cs", "create",
 		"-R", repo,
@@ -134,20 +139,13 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Run post-create hooks
-	if len(cfg.Hooks.PostCreate) > 0 {
-		// Get codespace info for placeholders
-		cs, _ := gh.GetCodespace(name)
-		branch := ""
-		if cs != nil {
-			branch = cs.Branch
-		}
-
-		for _, hook := range cfg.Hooks.PostCreate {
-			if err := runHook(hook, name, repo, branch); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: hook failed: %v\n", err)
-			}
-		}
+	// Get codespace info for placeholders
+	cs, _ := gh.GetCodespace(name)
+	branch := ""
+	if cs != nil {
+		branch = cs.Branch
 	}
+	runHooks("post-create", cfg.Hooks.PostCreate, name, repo, branch)
 
 	// Send notification
 	if !createNoNotify {
@@ -163,7 +161,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	sshNoRdm = false
 	sshRetry = cfg.GetEffectiveSSHRetry(repo)
 
-	cs, err := gh.GetCodespace(name)
+	cs, err = gh.GetCodespace(name)
 	if err != nil {
 		// Fall back to simple SSH if we can't get codespace info
 		return sshOnce(name, cfg, repo)
@@ -243,6 +241,7 @@ func sendNotification(title, message string) {
 
 // runHook executes a hook command with placeholder substitution.
 // Supported placeholders: {name}, {repo}, {branch}, {short_repo}
+// For pre-create hooks, {name} is empty because the codespace doesn't exist yet.
 func runHook(hook, name, repo, branch string) error {
 	// Extract short repo name
 	shortRepo := repo
@@ -265,6 +264,14 @@ func runHook(hook, name, repo, branch string) error {
 	hookCmd.Stderr = os.Stderr
 
 	return hookCmd.Run()
+}
+
+func runHooks(phase string, hooks []string, name, repo, branch string) {
+	for _, hook := range hooks {
+		if err := runHook(hook, name, repo, branch); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %s hook failed: %v\n", phase, err)
+		}
+	}
 }
 
 // Helper function to check if a codespace with the given repo already exists

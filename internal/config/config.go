@@ -44,6 +44,7 @@ type Repo struct {
 
 // Hooks defines commands to run at various lifecycle points.
 type Hooks struct {
+	PreCreate  []string `yaml:"pre_create,omitempty"`
 	PostCreate []string `yaml:"post_create,omitempty"`
 }
 
@@ -84,6 +85,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Hooks: Hooks{
+			PreCreate:  []string{},
 			PostCreate: []string{},
 		},
 		Terminal: Terminal{
