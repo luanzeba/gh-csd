@@ -34,6 +34,14 @@ func TestDefaultConfig(t *testing.T) {
 		t.Error("Default copy_terminfo should be true")
 	}
 
+	if cfg.Hooks.PreCreate == nil {
+		t.Error("Default pre_create hooks should be initialized")
+	}
+
+	if cfg.Hooks.PostCreate == nil {
+		t.Error("Default post_create hooks should be initialized")
+	}
+
 	// github/github should have special defaults
 	ghRepo := cfg.GetRepoConfig("github/github")
 	if ghRepo == nil {
