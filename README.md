@@ -127,12 +127,25 @@ hooks:
 
 See [CONFIG.md](CONFIG.md) for placeholders and a TTL-gated pre-create example.
 
+### Machine-Friendly Remote Command Execution
+
+`gh csd exec` runs one command in a codespace without opening an interactive shell. It's optimized for automation and editor/agent integrations by caching SSH config and reusing a control master:
+
+```bash
+gh csd exec -- pwd
+gh csd exec -C /workspaces/github -- git status --short
+gh csd exec -c my-codespace -- bin/rake test test/models/user_test.rb
+```
+
+Use `--` to separate gh-csd flags from the remote command and its flags.
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `gh csd create <repo>` | Create a new codespace, optionally SSH in with `--ssh` |
 | `gh csd ssh` | SSH into the current codespace |
+| `gh csd exec -- <command>` | Execute one command in the codespace (machine-friendly) |
 | `gh csd select` | Select a codespace as current (interactive picker) |
 | `gh csd get` | Print the current codespace name |
 | `gh csd delete` | Delete the current codespace, or use `--list` for multi-select |
