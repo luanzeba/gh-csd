@@ -41,10 +41,10 @@ gh csd delete
 You can also create a new codespace and immediately start working:
 
 ```
-gh csd create owner/repo --ssh
+gh csd create
 ```
 
-This creates the codespace, sets it as current, and drops you into an SSH session.
+This opens an interactive repo picker (from your `gh csd` config, plus a manual `owner/repo` option), creates the codespace, sets it as current, and drops you into an SSH session.
 
 ## Features
 
@@ -110,7 +110,7 @@ If you use [Ghostty](https://ghostty.org/), gh-csd automatically copies the term
 
 ### Desktop Notifications
 
-Creating a codespace can take a minute or two. When using `gh csd create --ssh`, you'll receive a desktop notification when the codespace is ready and the SSH connection is established. Disable this with `--no-notify` if preferred.
+Creating a codespace can take a minute or two. When using `gh csd create`, you'll receive a desktop notification when the codespace is ready and the SSH connection is established. Disable this with `--no-notify` if preferred.
 
 ### Lifecycle Hooks
 
@@ -143,7 +143,7 @@ Use `--` to separate gh-csd flags from the remote command and its flags.
 
 | Command | Description |
 |---------|-------------|
-| `gh csd create <repo>` | Create a new codespace, optionally SSH in with `--ssh` |
+| `gh csd create [repo]` | Create a new codespace (interactive picker if omitted) and SSH in unless `--no-ssh` |
 | `gh csd ssh` | SSH into the current codespace |
 | `gh csd exec -- <command>` | Execute one command in the codespace (machine-friendly) |
 | `gh csd select` | Select a codespace as current (interactive picker) |

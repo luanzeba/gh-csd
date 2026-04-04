@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,11 +28,13 @@ var (
 )
 
 var createCmd = &cobra.Command{
-	Use:   "create <repo>",
+	Use:   "create [repo]",
 	Short: "Create a codespace and optionally SSH into it",
 	Long: `Create a new codespace for the specified repository.
 
 Repo can be a full name (owner/repo) or an alias defined in config.
+If omitted, an interactive picker is shown with repos from config plus a
+manual owner/repo entry option.
 Workflow:
 1. Runs pre-create hooks if defined
 2. Creates the codespace
@@ -43,7 +47,7 @@ Settings like machine type, permissions, and SSH retry can be configured
 per-repo in ~/.config/gh-csd/config.yaml.
 
 Use --no-ssh to just create without connecting.`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runCreate,
 }
 
@@ -65,8 +69,19 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		cfg = config.DefaultConfig()
 	}
 
+	repoInput := ""
+	if len(args) > 0 {
+		repoInput = args[0]
+	} else {
+		selectedRepo, err := selectCreateRepoInteractive(cfg)
+		if err != nil {
+			return err
+		}
+		repoInput = selectedRepo
+	}
+
 	// Resolve alias to full repo name
-	repo := cfg.ResolveAlias(args[0])
+	repo := cfg.ResolveAlias(repoInput)
 	if !strings.Contains(repo, "/") {
 		// Assume it's a GitHub org repo
 		repo = "github/" + repo
@@ -171,6 +186,117 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return sshWithRetry(name, cs, cfg)
 	}
 	return sshOnce(name, cfg, repo)
+}
+
+type createRepoOption struct {
+	label    string
+	repo     string
+	isManual bool
+}
+
+func selectCreateRepoInteractive(cfg *config.Config) (string, error) {
+	options := buildCreateRepoOptions(cfg)
+	lines := make([]string, 0, len(options))
+	lookup := make(map[string]createRepoOption, len(options))
+	for _, option := range options {
+		lines = append(lines, option.label)
+		lookup[option.label] = option
+	}
+
+	fzfCmd := exec.Command(
+		"fzf",
+		"--prompt", "Repo> ",
+		"--header", "alias<TAB>repository (select last option to type owner/repo)",
+	)
+	fzfCmd.Stdin = strings.NewReader(strings.Join(lines, "\n"))
+	fzfCmd.Stderr = os.Stderr
+
+	output, err := fzfCmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 130 {
+			return "", fmt.Errorf("selection cancelled")
+		}
+		return "", fmt.Errorf("fzf failed: %w", err)
+	}
+
+	selected := strings.TrimSpace(string(output))
+	if selected == "" {
+		return "", fmt.Errorf("no selection made")
+	}
+
+	option, ok := lookup[selected]
+	if !ok {
+		return "", fmt.Errorf("unexpected selection: %q", selected)
+	}
+
+	if option.isManual {
+		return promptManualRepo()
+	}
+
+	return option.repo, nil
+}
+
+func buildCreateRepoOptions(cfg *config.Config) []createRepoOption {
+	repos := make([]string, 0, len(cfg.Repos))
+	for repo := range cfg.Repos {
+		repos = append(repos, repo)
+	}
+	sort.Strings(repos)
+
+	options := make([]createRepoOption, 0, len(repos)+1)
+	for _, repo := range repos {
+		repoCfg := cfg.Repos[repo]
+		alias := strings.TrimSpace(repoCfg.Alias)
+		if alias == "" {
+			alias = "-"
+		}
+
+		options = append(options, createRepoOption{
+			label: fmt.Sprintf("%s\t%s", alias, repo),
+			repo:  repo,
+		})
+	}
+
+	options = append(options, createRepoOption{
+		label:    "+\tEnter owner/repo manually",
+		isManual: true,
+	})
+
+	return options
+}
+
+func promptManualRepo() (string, error) {
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Print("Repository (owner/repo): ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return "", fmt.Errorf("failed to read repository: %w", err)
+		}
+
+		repo, err := normalizeManualRepoInput(input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			continue
+		}
+
+		return repo, nil
+	}
+}
+
+func normalizeManualRepoInput(input string) (string, error) {
+	repo := strings.TrimSpace(input)
+	repo = strings.TrimPrefix(repo, "https://github.com/")
+	repo = strings.TrimPrefix(repo, "http://github.com/")
+	repo = strings.TrimSuffix(repo, ".git")
+	repo = strings.Trim(repo, "/")
+
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", fmt.Errorf("invalid repository %q (expected owner/repo)", strings.TrimSpace(input))
+	}
+
+	return parts[0] + "/" + parts[1], nil
 }
 
 // expandRepoAlias is deprecated - use config.ResolveAlias instead
